@@ -4,6 +4,9 @@
   var config = window.SITE_CONFIG;
   var games = window.GAMES_DATA || [];
 
+  var currentGameIndex = 0;
+  var currentPageIndex = 0;
+
   if (!config) {
     console.error("SITE_CONFIG が読み込まれていません。data/site.js を確認してください。");
     return;
@@ -47,6 +50,18 @@
     return escapeHtml(text).replace(/\n/g, "<br>");
   }
 
+  function getDetailPages(game) {
+    if (game.detailPages && game.detailPages.length) {
+      return game.detailPages;
+    }
+    return [
+      {
+        image: game.still || "",
+        text: (game.name ? game.name + "\n\n" : "") + (game.description || ""),
+      },
+    ];
+  }
+
   function renderHeader() {
     var navItems = config.nav
       .map(function (item) {
@@ -63,13 +78,23 @@
 
   function renderHero() {
     var hero = config.hero;
+    var subtitleHtml = hero.subtitle
+      ? "<p>" + escapeHtml(hero.subtitle) + "</p>"
+      : "";
+    var showImage = hero.showImage !== false && hero.image;
+    var imageHtml = showImage
+      ? '<div class="hero-image-wrap">' +
+        '<img src="' + escapeHtml(hero.image) + '" alt="' + escapeHtml(hero.imageAlt || "") + '">' +
+        "</div>"
+      : "";
+    var sectionClass = showImage ? "hero" : "hero hero-no-image";
+
+    document.getElementById("home").className = sectionClass;
     document.getElementById("home").innerHTML =
-      '<div class="hero-image-wrap">' +
-      '<img src="' + escapeHtml(hero.image) + '" alt="' + escapeHtml(hero.imageAlt || "") + '">' +
-      "</div>" +
+      imageHtml +
       '<div class="hero-text">' +
       "<h1>" + escapeHtml(hero.title) + "</h1>" +
-      "<p>" + escapeHtml(hero.subtitle) + "</p>" +
+      subtitleHtml +
       "</div>";
   }
 
@@ -98,7 +123,7 @@
     );
   }
 
-  function renderPlatformTags(platforms) {
+  function renderPlatformTags(platforms, clickable) {
     if (!platforms || !platforms.length) return "";
     return (
       '<div class="tag-group tag-group-platform">' +
@@ -108,10 +133,10 @@
           var label = platform.label || platformLabels[type] || type;
           var url = (platform.url || "").trim();
 
-          if (url) {
+          if (url && clickable !== false) {
             return (
               '<a class="tag tag-platform tag-platform-' + escapeHtml(type) + '" href="' +
-              escapeHtml(url) + '" target="_blank" rel="noopener noreferrer">' +
+              escapeHtml(url) + '" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">' +
               escapeHtml(label) + "</a>"
             );
           }
@@ -126,13 +151,14 @@
     );
   }
 
-  function renderGameCard(game) {
+  function renderGameCard(game, index) {
     var stillHtml = game.still
       ? '<img src="' + escapeHtml(game.still) + '" alt="' + escapeHtml(game.name) + '" loading="lazy">'
       : '<div class="game-still-placeholder"><span>No Image</span></div>';
 
     return (
-      '<article class="game-card">' +
+      '<article class="game-card" data-game-index="' + index + '" role="button" tabindex="0" aria-label="' +
+      escapeHtml(game.name) + 'の詳細を見る">' +
       '<div class="game-still">' + stillHtml + "</div>" +
       '<div class="game-info">' +
       '<div class="game-title-row">' +
@@ -157,8 +183,22 @@
       '<div class="game-list">' + cards + "</div>";
   }
 
+  function getNewsItems() {
+    if (Array.isArray(config.newsItems)) return config.newsItems;
+    if (Array.isArray(config.news)) return config.news;
+    return [];
+  }
+
+  function getNewsTitle() {
+    if (config.news && config.news.title) return config.news.title;
+    return "お知らせ";
+  }
+
   function renderNews() {
-    var items = (config.news || [])
+    var items = getNewsItems()
+      .filter(function (item) {
+        return item && item.date;
+      })
       .map(function (item) {
         return (
           '<li class="news-item">' +
@@ -170,7 +210,7 @@
       .join("");
 
     document.getElementById("news").innerHTML =
-      "<h2>NEWS</h2>" +
+      "<h2>" + escapeHtml(getNewsTitle()) + "</h2>" +
       '<ul class="news-list">' + items + "</ul>";
   }
 
@@ -210,8 +250,149 @@
   }
 
   function renderFooter() {
+    var footer = config.footer;
+    var privacyHtml = footer.privacyUrl
+      ? '<p class="footer-links"><a href="' + escapeHtml(footer.privacyUrl) + '">' +
+        escapeHtml(footer.privacyLabel || "プライバシーポリシー") + "</a></p>"
+      : "";
+
     document.getElementById("site-footer").innerHTML =
-      "<p>" + escapeHtml(config.footer.copyright) + "</p>";
+      privacyHtml +
+      "<p>" + escapeHtml(footer.copyright) + "</p>";
+  }
+
+  function createModal() {
+    var modal = document.createElement("div");
+    modal.id = "game-modal";
+    modal.className = "game-modal";
+    modal.setAttribute("aria-hidden", "true");
+    modal.innerHTML =
+      '<div class="game-modal-overlay" data-modal-close></div>' +
+      '<div class="game-modal-panel" role="dialog" aria-modal="true" aria-labelledby="game-modal-title">' +
+      '<button type="button" class="game-modal-close" data-modal-close aria-label="閉じる">&times;</button>' +
+      '<div class="game-modal-header">' +
+      '<h3 id="game-modal-title"></h3>' +
+      '<span class="game-modal-status"></span>' +
+      "</div>" +
+      '<div class="game-modal-body">' +
+      '<button type="button" class="game-modal-nav game-modal-prev" aria-label="前のページ">&#10094;</button>' +
+      '<div class="game-modal-content">' +
+      '<div class="game-modal-image-wrap"></div>' +
+      '<div class="game-modal-text"></div>' +
+      "</div>" +
+      '<button type="button" class="game-modal-nav game-modal-next" aria-label="次のページ">&#10095;</button>' +
+      "</div>" +
+      '<div class="game-modal-footer">' +
+      '<span class="game-modal-page-indicator"></span>' +
+      '<div class="game-modal-platforms"></div>' +
+      "</div>" +
+      "</div>";
+    document.body.appendChild(modal);
+    return modal;
+  }
+
+  function updateModalContent() {
+    var game = games[currentGameIndex];
+    if (!game) return;
+
+    var modal = document.getElementById("game-modal");
+    var pages = getDetailPages(game);
+    var page = pages[currentPageIndex] || pages[0];
+    var totalPages = pages.length;
+
+    modal.querySelector("#game-modal-title").textContent = game.name;
+    modal.querySelector(".game-modal-status").innerHTML = renderStatusTag(game.status);
+
+    var imageWrap = modal.querySelector(".game-modal-image-wrap");
+    if (page.image) {
+      imageWrap.innerHTML = '<img src="' + escapeHtml(page.image) + '" alt="' + escapeHtml(game.name) + '">';
+      imageWrap.style.display = "";
+    } else {
+      imageWrap.innerHTML = "";
+      imageWrap.style.display = "none";
+    }
+
+    modal.querySelector(".game-modal-text").innerHTML = nl2br(page.text || "");
+    modal.querySelector(".game-modal-page-indicator").textContent =
+      totalPages > 1 ? (currentPageIndex + 1) + " / " + totalPages : "";
+
+    modal.querySelector(".game-modal-platforms").innerHTML =
+      renderGenreTags(game.genres) + renderPlatformTags(game.platforms);
+
+    var prevBtn = modal.querySelector(".game-modal-prev");
+    var nextBtn = modal.querySelector(".game-modal-next");
+    prevBtn.disabled = currentPageIndex <= 0;
+    nextBtn.disabled = currentPageIndex >= totalPages - 1;
+    prevBtn.style.visibility = totalPages > 1 ? "visible" : "hidden";
+    nextBtn.style.visibility = totalPages > 1 ? "visible" : "hidden";
+  }
+
+  function openModal(gameIndex) {
+    currentGameIndex = gameIndex;
+    currentPageIndex = 0;
+    var modal = document.getElementById("game-modal");
+    modal.classList.add("is-open");
+    modal.setAttribute("aria-hidden", "false");
+    document.body.classList.add("modal-open");
+    updateModalContent();
+  }
+
+  function closeModal() {
+    var modal = document.getElementById("game-modal");
+    modal.classList.remove("is-open");
+    modal.setAttribute("aria-hidden", "true");
+    document.body.classList.remove("modal-open");
+  }
+
+  function goToPrevPage() {
+    if (currentPageIndex > 0) {
+      currentPageIndex -= 1;
+      updateModalContent();
+    }
+  }
+
+  function goToNextPage() {
+    var pages = getDetailPages(games[currentGameIndex]);
+    if (currentPageIndex < pages.length - 1) {
+      currentPageIndex += 1;
+      updateModalContent();
+    }
+  }
+
+  function bindGameModal() {
+    createModal();
+
+    document.getElementById("games").addEventListener("click", function (event) {
+      var card = event.target.closest(".game-card");
+      if (!card) return;
+      if (event.target.closest("a")) return;
+      openModal(parseInt(card.getAttribute("data-game-index"), 10));
+    });
+
+    document.getElementById("games").addEventListener("keydown", function (event) {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      var card = event.target.closest(".game-card");
+      if (!card) return;
+      event.preventDefault();
+      openModal(parseInt(card.getAttribute("data-game-index"), 10));
+    });
+
+    var modal = document.getElementById("game-modal");
+    modal.querySelector(".game-modal-prev").addEventListener("click", goToPrevPage);
+    modal.querySelector(".game-modal-next").addEventListener("click", goToNextPage);
+
+    modal.querySelectorAll("[data-modal-close]").forEach(function (el) {
+      el.addEventListener("click", closeModal);
+    });
+
+    document.addEventListener("keydown", function (event) {
+      var modalEl = document.getElementById("game-modal");
+      if (!modalEl.classList.contains("is-open")) return;
+
+      if (event.key === "Escape") closeModal();
+      if (event.key === "ArrowLeft") goToPrevPage();
+      if (event.key === "ArrowRight") goToNextPage();
+    });
   }
 
   function init() {
@@ -223,6 +404,7 @@
     renderNews();
     renderContact();
     renderFooter();
+    bindGameModal();
   }
 
   if (document.readyState === "loading") {

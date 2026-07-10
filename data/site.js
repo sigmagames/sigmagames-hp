@@ -41,7 +41,7 @@ window.SITE_CONFIG = {
   },
 
   newsItems: [
-    { date: "2026.07", text: "公式サイト公開しました！" },
+    { date: "2026.07", text: "公式サイトを公開しました！" },
   ],
 
   contact: {
